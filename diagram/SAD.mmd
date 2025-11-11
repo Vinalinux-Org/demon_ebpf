@@ -1,0 +1,19 @@
+graph TD
+%% --- eBPF Layer ---
+subgraph "eBPF Kernel Module"
+    K["Kernel / eBPF Program"]
+    RB["Ring Buffer Map"]
+end
+
+%% --- Collector & Server Nodes (không viền) ---
+C["Collector<br>(queue + batch worker)"]
+S["Server<br>(queue + log writer)"]
+F["Log File"]
+U["User Process"]
+
+%% --- Data flow ---
+U -->|"system call (sys_enter_*)"| K
+K -->|"submit event"| RB
+RB -->|"deliver event"| C
+C -->|"HTTP POST JSON"| S
+S -->|"append log line"| F
