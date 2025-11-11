@@ -1,0 +1,30 @@
+sequenceDiagram
+    participant RB as Ring Buffer
+    participant C as Collector
+    participant S as Server
+
+    %% Kernel gửi event đến collector callback
+    %% on_ring_event nhận struct file_event từ ring buffer
+    RB-->>C: on_ring_event(struct file_event)
+
+    %% Collector lọc event internal
+    %% should_skip_process trả true nếu event thuộc collector/server
+    C->>C: should_skip_process()
+
+    %% Build JSON và enqueue vào queue
+    %% format_event_time: chuyển timestamp e.ts_ns + offset_ns -> string
+    %% get_syscall_type_str: map e.type -> "OPEN"/"READ"/"WRITE"/"UNK"
+    %% build_file_event_json: tạo JSON string từ struct file_event
+    C->>C: format_event_time() / get_syscall_type_str() / build_file_event_json()
+
+    %% enqueue_event: thêm JSON vào queue nội bộ của collector
+    C->>C: enqueue_event()
+
+    %% Collector gom batch ≤ 10 event trong event_sender_thread
+    %% flush_batch: gửi batch đến server và reset batch
+    C->>C: event_sender_thread() / flush_batch()
+
+    %% Gửi batch sang server
+    %% HTTP POST /events, nhận 200 OK hoặc retry nếu gửi thất bại
+    C->>S: HTTP POST /events
+    S-->>C: 200 OK / retry nếu lỗi

@@ -1,0 +1,20 @@
+sequenceDiagram
+    participant C as Collector
+    participant S as Server
+    participant F as Log File
+
+    %% Collector gửi batch JSON array đến server
+    C->>S: HTTP POST /events [JSON array]
+
+    %% Server xử lý request
+    %% decode JSON body -> []FileEvent
+    S->>S: decode request body (json.Decoder)
+    %% enqueue từng event vào internal channel queue
+    S->>S: enqueueEvent() / non-blocking
+
+    %% Server phản hồi collector
+    S-->>C: HTTP 200 OK
+
+    %% Event writer thread
+    %% Lấy event từ queue, gom batch (≤10), ghi ra log file
+    S->>F: flushBatch() -> file

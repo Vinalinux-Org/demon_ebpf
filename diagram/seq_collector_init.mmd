@@ -1,0 +1,14 @@
+sequenceDiagram
+    participant C as Collector
+    participant BPF as eBPF Object (.bpf.o)
+    participant K as Kernel
+    participant RB as Ring Buffer Map
+
+    %% Collector khởi tạo eBPF object và load bytecode + maps vào kernel
+    C->>BPF: load_bpf_object(path) 
+    %% Collector attach tất cả chương trình BPF vào kernel (tracepoint/syscall hooks)
+    C->>K: bpf_program__attach()
+    %% Collector tạo ring buffer và đăng ký callback on_ring_event để nhận event
+    C->>RB: create_ring_buffer(obj) 
+    %% Collector chuyển sang trạng thái ready và start sender thread để xử lý batch event
+    C-->>C: ready + start event_sender_thread
