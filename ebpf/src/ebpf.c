@@ -6,13 +6,25 @@
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
-/* Ring buffer dùng để gửi event lên user space */
+// Ring buffer used to send events to user-space
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
-/* tracepoint: sys_enter_openat */
+/**
+ * Function: trace_openat
+ * Summary:
+ *   eBPF tracepoint handler for sys_enter_openat. Captures process
+ *   information and the filename being opened, then submits the event
+ *   to a ring buffer for user-space processing.
+ *
+ * Parameters:
+ *   - ctx: pointer to the tracepoint context (syscall arguments and metadata).
+ *
+ * Return:
+ *   - 0: always returns 0 to indicate successful probe execution.
+ */
 SEC("tracepoint/syscalls/sys_enter_openat")
 int trace_openat(struct trace_event_raw_sys_enter *ctx)
 {
@@ -38,7 +50,19 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
     return 0;
 }
 
-/* tracepoint: sys_enter_read */
+/**
+ * Function: trace_read
+ * Summary:
+ *   eBPF tracepoint handler for sys_enter_read. Captures process and
+ *   read syscall information (PID, UID, fd, count, timestamp, etc.)
+ *   and submits the event to the ring buffer for user-space processing.
+ *
+ * Parameters:
+ *   - ctx: pointer to the tracepoint context containing syscall arguments.
+ *
+ * Return:
+ *   - 0: always returns 0 to indicate successful probe execution.
+ */
 SEC("tracepoint/syscalls/sys_enter_read")
 int trace_read(struct trace_event_raw_sys_enter *ctx)
 {
@@ -57,14 +81,26 @@ int trace_read(struct trace_event_raw_sys_enter *ctx)
 
     e->fd = (int)ctx->args[0];
     e->count = (int)ctx->args[2];
-    e->filename[0] = '\0'; // không có tên file tại read()
+    e->filename[0] = '\0'; 
     e->type = SYSCALL_READ;
 
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
 
-/* tracepoint: sys_enter_write */
+/**
+ * Function: trace_write
+ * Summary:
+ *   eBPF tracepoint handler for sys_enter_write. Captures information
+ *   about write system calls, including process IDs, UID, file descriptor,
+ *   write size, and timestamp, then submits the event to the ring buffer.
+ *
+ * Parameters:
+ *   - ctx: pointer to the tracepoint context containing syscall arguments.
+ *
+ * Return:
+ *   - 0: always returns 0 to indicate successful probe execution.
+ */
 SEC("tracepoint/syscalls/sys_enter_write")
 int trace_write(struct trace_event_raw_sys_enter *ctx)
 {
@@ -83,7 +119,7 @@ int trace_write(struct trace_event_raw_sys_enter *ctx)
 
     e->fd = (int)ctx->args[0];
     e->count = (int)ctx->args[2];
-    e->filename[0] = '\0'; // không có tên file tại write()
+    e->filename[0] = '\0'; 
     e->type = SYSCALL_WRITE;
 
     bpf_ringbuf_submit(e, 0);
