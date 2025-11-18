@@ -3,15 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"time"
 )
 
-// ==========================================================
-// Structs
-// ==========================================================
+// ------------------- Struct -------------------
 type FileEvent struct {
 	Time     string `json:"time"`
 	Type     string `json:"type"`
@@ -25,128 +24,50 @@ type FileEvent struct {
 	Filename string `json:"filename"`
 }
 
-// ==========================================================
-// Globals
-// ==========================================================
-var (
-	logFile    *os.File
-	eventQueue = make(chan FileEvent, 10000)
-)
-
-const (
-	eventQueueSize     = 10000
-	batchSize          = 10
-	batchFlushInterval = time.Second
-)
-
-// ==========================================================
-// Logging helpers
-// ==========================================================
+// ------------------- Global -------------------
+// var logFile *os.File
+var logFile io.Writer
+var eventQueue = make(chan FileEvent, 10000) // channel queue
+const batchSize = 10
 
 /**
- * Function: logInfo
+ * Function: startLogWriter
  * Summary:
- *   Logs an informational message to standard output with a consistent
- *   "[INFO]" prefix. Accepts format strings similar to fmt.Printf.
+ *   Launches a background goroutine that continuously consumes events from
+ *   the eventQueue, batches them, and periodically writes them to a log file.
+ *   The function ensures batched writes either when the batch reaches a
+ *   predefined size or after a fixed time interval.
  *
  * Parameters:
- *   - format: format string for the message
- *   - v: optional variadic arguments for formatting
+ *   - None.
  *
  * Return:
- *   - None
+ *   - None (runs asynchronously in a goroutine).
  */
-func logInfo(format string, v ...interface{}) {
-	log.Printf("[INFO] "+format, v...)
-}
-
-/**
- * Function: logError
- * Summary:
- *   Logs an error message to standard output with a consistent
- *   "[ERROR]" prefix. Accepts format strings similar to fmt.Printf.
- *
- * Parameters:
- *   - format: format string for the message
- *   - v: optional variadic arguments for formatting
- *
- * Return:
- *   - None
- */
-func logError(format string, v ...interface{}) {
-	log.Printf("[ERROR] "+format, v...)
-}
-
-// ==========================================================
-// Event sender (batch + log)
-// ==========================================================
-
-/**
- * Function: flushBatch
- * Summary:
- *   Serializes a slice of FileEvent objects into JSON and writes them
- *   to the log file, one event per line. Logs any errors encountered
- *   during marshaling or writing.
- *
- * Parameters:
- *   - batch: slice of FileEvent objects to write
- *
- * Return:
- *   - None
- */
-func flushBatch(batch []FileEvent) {
-	for _, ev := range batch {
-		b, err := json.Marshal(ev)
-		if err != nil {
-			logError("Cannot marshal event: %v", err)
-			continue
-		}
-		if _, err := logFile.Write(b); err != nil {
-			logError("Error writing log: %v", err)
-		}
-		if _, err := logFile.WriteString("\n"); err != nil {
-			logError("Error writing newline: %v", err)
-		}
-	}
-}
-
-/**
- * Function: eventSenderLoop
- * Summary:
- *   Launches a background goroutine that continuously consumes events
- *   from the eventQueue, accumulates them into batches, and flushes
- *   them to the log file either when the batch reaches a predefined
- *   size or after a fixed time interval.
- *
- * Parameters:
- *   - None
- *
- * Return:
- *   - None (runs asynchronously in a goroutine)
- */
-func eventSenderLoop() {
+func startLogWriter() {
 	go func() {
 		batch := make([]FileEvent, 0, batchSize)
-		ticker := time.NewTicker(batchFlushInterval)
+		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case ev, ok := <-eventQueue:
 				if !ok {
+					// queue closed, flush remaining
 					if len(batch) > 0 {
-						flushBatch(batch)
+						writeBatch(batch)
 					}
 					return
 				}
 				batch = append(batch, ev)
 				if len(batch) >= batchSize {
-					flushBatch(batch)
+					writeBatch(batch)
 					batch = batch[:0]
 				}
 			case <-ticker.C:
 				if len(batch) > 0 {
-					flushBatch(batch)
+					writeBatch(batch)
 					batch = batch[:0]
 				}
 			}
@@ -154,74 +75,49 @@ func eventSenderLoop() {
 	}()
 }
 
-// ==========================================================
-// HTTP handler helpers
-// ==========================================================
-
 /**
- * Function: parseEvents
+ * Function: writeBatch
  * Summary:
- *   Reads and decodes a JSON array of FileEvent objects from an HTTP request body.
- *   Ensures the body is closed after reading.
+ *   Serializes and writes a batch of FileEvent objects to the log file in JSON format.
+ *   Each event is written as a single line, followed by a newline character.
+ *   Logs any errors encountered during marshaling or writing.
  *
  * Parameters:
- *   - r: pointer to the HTTP request containing the JSON payload
+ *   - batch: slice of FileEvent objects to write.
  *
  * Return:
- *   - []FileEvent: slice of decoded events
- *   - error: decoding error, if any
+ *   - None.
  */
-func parseEvents(r *http.Request) ([]FileEvent, error) {
-	defer r.Body.Close()
-	var events []FileEvent
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&events); err != nil {
-		return nil, err
-	}
-	return events, nil
-}
-
-/**
- * Function: enqueueEvents
- * Summary:
- *   Pushes a slice of FileEvent objects into the internal eventQueue for
- *   asynchronous processing. If the queue is full, events are dropped
- *   with an error log.
- *
- * Parameters:
- *   - events: slice of FileEvent objects to enqueue
- *
- * Return:
- *   - None
- */
-func enqueueEvents(events []FileEvent) {
-	for _, ev := range events {
-		select {
-		case eventQueue <- ev:
-		default:
-			logError("Event queue full, dropping event")
+func writeBatch(batch []FileEvent) {
+	for _, ev := range batch {
+		b, err := json.Marshal(ev)
+		if err != nil {
+			log.Printf("Cannot marshal event: %v", err)
+			continue
+		}
+		if _, err := logFile.Write(b); err != nil {
+			log.Printf("Error writing log: %v", err)
+		}
+		if _, err := logFile.Write([]byte("\n")); err != nil {
+			log.Printf("Error writing newline: %v", err)
 		}
 	}
 }
 
-// ==========================================================
-// HTTP handler
-// ==========================================================
-
 /**
  * Function: handleEvent
  * Summary:
- *   HTTP handler for receiving POST requests containing a JSON array of
- *   FileEvent objects. Validates the request method, decodes the JSON payload,
- *   enqueues the events for processing, and responds with a status message
- *   including the server timestamp.
+ *   Handles incoming HTTP POST requests containing a JSON array of FileEvent objects.
+ *   Validates the request method, decodes JSON, and enqueues each event into the eventQueue.
+ *   If the queue is full, the event is dropped with a warning log.
+ *   Responds with a JSON status message and timestamp upon success.
  *
  * Parameters:
- *   - w: HTTP response writer used to send back the response
- *   - r: HTTP request containing the JSON array of events
+ *   - w: HTTP response writer for sending responses.
+ *   - r: HTTP request containing JSON payload of FileEvent objects.
  *
  * Return:
- *   - None (writes HTTP response directly)
+ *   - None (writes HTTP response directly).
  */
 func handleEvent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -229,87 +125,92 @@ func handleEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, err := parseEvents(r)
-	if err != nil {
+	var events []FileEvent
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&events); err != nil {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	defer r.Body.Close()
 
-	enqueueEvents(events)
+	// Push events into queue (non-blocking)
+	for _, ev := range events {
+		select {
+		case eventQueue <- ev:
+		default:
+			log.Println("Event queue full, dropping event")
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"status":"ok","received_at":"%s"}`, time.Now().Format(time.RFC3339))
 }
 
-// ==========================================================
-// Server helpers
-// ==========================================================
-
 /**
- * Function: startHTTPServer
+ * Function: newServer
  * Summary:
- *   Initializes and starts the HTTP server in a background goroutine. Registers
- *   the "/events" endpoint to handle incoming event batches. Configures read
- *   and write timeouts and logs server startup information.
+ *   Creates and configures a new HTTP server instance for receiving events.
+ *   The function opens the log file using the provided openFile callback,
+ *   initializes the background log writer, registers the /events HTTP handler,
+ *   and returns a fully constructed http.Server ready to be started.
  *
  * Parameters:
- *   - addr: string representing the address and port to listen on (e.g., ":8080")
+ *   - openFile: A function used to open or create the log file. This allows
+ *               unit tests to inject a mock implementation and verify behavior.
  *
  * Return:
- *   - Pointer to the http.Server instance, allowing for future shutdown or configuration
+ *   - *http.Server: A pointer to the newly created server instance.
+ *   - error       : Non-nil if the log file cannot be opened.
  */
-func startHTTPServer(addr string) *http.Server {
+func newServer(openFile func(name string, flag int, perm os.FileMode) (io.Writer, error)) (*http.Server, error) {
+	f, err := openFile("events.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open log file: %v", err)
+	}
+	logFile = f
+
+	startLogWriter()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/events", handleEvent)
 
-	server := &http.Server{
-		Addr:         addr,
+	srv := &http.Server{
+		Addr:         ":8080",
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 	}
 
-	go func() {
-		logInfo("Server listening on %s — writing to events.log", addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logError("Server error: %v", err)
-		}
-	}()
-
-	return server
+	return srv, nil
 }
-
-// ==========================================================
-// Main
-// ==========================================================
 
 /**
  * Function: main
  * Summary:
- *   Entry point of the server application. Opens or creates the log file for
- *   writing events, starts the background event sender loop that flushes
- *   events from the internal queue to the log file, and starts the HTTP server
- *   to receive event batches from collectors. Blocks indefinitely to keep
- *   the server running.
+ *   Entry point of the server application. It creates a new HTTP server
+ *   instance by opening the log file "events.log", starts the server,
+ *   and listens for incoming HTTP requests on port 8080. If server startup
+ *   fails or an error occurs during runtime, the function logs the error
+ *   and exits.
  *
  * Parameters:
- *   - None
+ *   - None.
  *
  * Return:
- *   - None (program runs indefinitely until terminated)
+ *   - None. Exits the program on error or after server termination.
  */
 func main() {
-	var err error
-	logFile, err = os.OpenFile("events.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	srv, err := newServer(func(name string, flag int, perm os.FileMode) (io.Writer, error) {
+		return os.OpenFile(name, flag, perm) // *os.File implements io.Writer
+	})
+
 	if err != nil {
-		logError("Cannot open log file: %v", err)
-		return
+		log.Fatalf("server startup failed: %v", err)
 	}
-	defer logFile.Close()
 
-	eventSenderLoop()
-	startHTTPServer(":8080")
-
-	select {}
+	log.Println("Server listening on :8080 — writing to events.log")
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
 }
