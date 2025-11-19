@@ -49,8 +49,23 @@ Hệ thống được chia thành 3 tầng:
 ```
 demon_ebpf/
 ├── collector
-│   ├── collector.c
-│   └── Makefile
+│   ├── collector_core
+│   │   ├── collector_core.c
+│   │   └── collector_core.h
+│   ├── json_builder
+│   │   ├── json_builder.c
+│   │   └── json_builder.h
+│   ├── main.c
+│   ├── Makefile
+│   ├── queue
+│   │   ├── queue.c
+│   │   └── queue.h
+│   ├── test
+│   │   ├── collector_test.c
+│   │   └── Makefile
+│   └── time_utils
+│       ├── time_utils.c
+│       └── time_utils.h
 ├── diagram
 │   ├── SAD.mmd
 │   ├── seq_collector_init.mmd
@@ -69,12 +84,28 @@ demon_ebpf/
 ├── README.md
 └── server
     ├── main.go
+    ├── main_test.go
     └── Makefile
 ```
 
- Giải thích:
- - **ebpf/**: code chạy trong kernel.  
- - **collector/**: code user-space để nhận event từ eBPF và gửi server.  
- - **server/**: code server nhận event và ghi log.  
- - **diagram/**: các diagram Mermaid giải thích luồng hoạt động.  
- - **README.md**: giải thích luồng, dùng làm dữ liệu training AI.
+
+### Giải thích:
+
+- **ebpf/**: Mã nguồn chạy trong kernel, sử dụng eBPF để thu thập và xử lý sự kiện hệ thống. Bao gồm các file như `common.h`, `vmlinux.h`, và mã nguồn trong thư mục `src`.
+
+- **collector/**: Mã nguồn user-space nhận sự kiện từ eBPF và gửi tới server, bao gồm:
+  - **collector_core**: Các chức năng cơ bản thu thập sự kiện.
+  - **json_builder**: Xây dựng và mã hóa dữ liệu JSON.
+  - **queue**: Quản lý hàng đợi sự kiện.
+  - **time_utils**: Các hàm tiện ích xử lý thời gian.
+  - **test**: Mã nguồn và makefile cho unit tests của collector.
+
+- **server/**: Mã nguồn server nhận sự kiện từ collector và ghi log. Bao gồm:
+  - `main.go`: Mã nguồn chính của server.
+  - `main_test.go`: Các unit test cho `main.go`.
+  - Makefile: Cấu hình biên dịch và chạy server.
+
+- **diagram/**: Sơ đồ Mermaid giải thích luồng hoạt động giữa các thành phần trong hệ thống.
+
+- **README.md**: Tài liệu giải thích cấu trúc, luồng hoạt động và hướng dẫn sử dụng, cũng dùng làm dữ liệu huấn luyện AI.
+
